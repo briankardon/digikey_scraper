@@ -82,18 +82,25 @@ def api_headers(client_id, token):
 
 
 def lookup_product(part_number, client_id, token):
-    """Call the ProductDetails API and return the response dict."""
+    """Call the ProductDetails API and return (response_dict, headers) tuple."""
     url = PRODUCT_DETAILS_URL.format(productNumber=urllib.parse.quote(part_number, safe=""))
     req = urllib.request.Request(url, headers=api_headers(client_id, token))
 
     try:
         with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())
+            return json.loads(resp.read()), resp.headers
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         print(f"API error for {part_number}: {e.code} {e.reason}", file=sys.stderr)
         print(body, file=sys.stderr)
-        return None
+        return None, None
+
+
+def print_quota(headers):
+    """Print API quota info from response headers."""
+    limit = headers.get("x-ratelimit-limit", "?")
+    remaining = headers.get("x-ratelimit-remaining", "?")
+    print(f"API quota: {remaining}/{limit} requests remaining")
 
 
 def keyword_search(keyword, client_id, token, limit=50):
@@ -330,13 +337,17 @@ def main():
         description="Look up DigiKey product info by part number."
     )
     parser.add_argument(
-        "part_number",
+        "part_number", nargs="?",
         help="DigiKey part number, comma-separated list, file path (one per line), "
              "or wildcard pattern (e.g. 475-BP104FAS*)"
     )
     parser.add_argument(
         "--json", action="store_true",
         help="Output raw JSON response"
+    )
+    parser.add_argument(
+        "--quota", action="store_true",
+        help="Show API quota usage (requests remaining / limit)."
     )
     parser.add_argument(
         "--fmt",
@@ -359,8 +370,18 @@ def main():
     )
     args = parser.parse_args()
 
+    if not args.part_number and not args.quota:
+        parser.error("part_number is required unless --quota is used alone")
+
     client_id, client_secret = get_credentials()
     token = get_oauth_token(client_id, client_secret)
+
+    if not args.part_number:
+        # --quota with no part number: make a minimal lookup to get headers
+        _, headers = lookup_product("test", client_id, token)
+        if headers:
+            print_quota(headers)
+        return
 
     part_numbers, total_search = resolve_part_numbers(args.part_number, client_id, token)
 
@@ -377,6 +398,7 @@ def main():
 
     separator_needed = not args.fmt and len(part_numbers) > 1
     first = True
+    last_headers = None
     for pn in part_numbers:
         if separator_needed:
             if not first:
@@ -384,10 +406,13 @@ def main():
             print(f"=== {pn} ===")
         first = False
 
-        data = lookup_product(pn, client_id, token)
+        data, last_headers = lookup_product(pn, client_id, token)
         if data is None:
             continue
         output_product(data, args, target_dk_pn=pn)
+
+    if args.quota and last_headers:
+        print_quota(last_headers)
 
 
 if __name__ == "__main__":

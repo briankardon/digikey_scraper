@@ -9,6 +9,7 @@ A command-line tool for looking up electronic component product information via 
 - View descriptions, pricing, packaging, and manufacturer info
 - Custom format strings for scripted/automated output
 - Raw JSON output for further processing
+- API quota monitoring
 
 ## Prerequisites
 
@@ -174,6 +175,24 @@ Price codes use the applicable price break: the highest break quantity at or bel
 --fmt "URL"
 ```
 
+### API Quota
+
+Check how many API requests you have remaining:
+
+```bash
+# Standalone (uses one API call)
+python source/digikey_lookup.py --quota
+
+# Combined with a lookup (no extra API call)
+python source/digikey_lookup.py "BP 104 FAS-Z" --quota
+```
+
+Output:
+
+```
+API quota: 907/1000 requests remaining
+```
+
 ### Options Summary
 
 | Option              | Description                                          |
@@ -183,6 +202,7 @@ Price codes use the applicable price break: the highest break quantity at or bel
 | `--max N`           | Cap results at N (default: 10). 0 or inf = no limit  |
 | `-i`, `--interactive` | Prompt before looking up more than 10 results      |
 | `-q`, `--quiet`     | Suppress warnings                                    |
+| `--quota`           | Show API quota (requests remaining / limit)          |
 
 ## Project Structure
 
