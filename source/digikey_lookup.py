@@ -90,10 +90,23 @@ def lookup_product(part_number, client_id, token):
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read()), resp.headers
     except urllib.error.HTTPError as e:
+        headers = e.headers
         body = e.read().decode()
         print(f"API error for {part_number}: {e.code} {e.reason}", file=sys.stderr)
         print(body, file=sys.stderr)
-        return None, None
+        return None, headers
+
+
+def fetch_quota_headers(client_id, token):
+    """Make a minimal API request and return the response headers."""
+    url = PRODUCT_DETAILS_URL.format(productNumber="quota-check")
+    req = urllib.request.Request(url, headers=api_headers(client_id, token))
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.headers
+    except urllib.error.HTTPError as e:
+        e.read()
+        return e.headers
 
 
 def print_quota(headers):
@@ -377,10 +390,12 @@ def main():
     token = get_oauth_token(client_id, client_secret)
 
     if not args.part_number:
-        # --quota with no part number: make a minimal lookup to get headers
-        _, headers = lookup_product("test", client_id, token)
+        # --quota with no part number: make a minimal request just to read headers
+        headers = fetch_quota_headers(client_id, token)
         if headers:
             print_quota(headers)
+        else:
+            print("Error: could not retrieve quota info.", file=sys.stderr)
         return
 
     part_numbers, total_search = resolve_part_numbers(args.part_number, client_id, token)
