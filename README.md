@@ -5,13 +5,14 @@ A command-line tool for looking up electronic component product information via 
 ## Features
 
 - Look up any component by DigiKey part number or manufacturer part number
-- View descriptions, pricing, and manufacturer info
+- Multi-product lookup: comma-separated, file input, or wildcard patterns
+- View descriptions, pricing, packaging, and manufacturer info
 - Custom format strings for scripted/automated output
 - Raw JSON output for further processing
 
 ## Prerequisites
 
-- Python 3.6+
+- Python 3.8+
 - A DigiKey API account with a **client ID** and **client secret** (register at [developer.digikey.com](https://developer.digikey.com/))
 
 ## Configuration
@@ -72,11 +73,51 @@ Description:          Photodiode 880nm 20ns 120° 2-SMD, Gull Wing
 DigiKey Part #:       475-BP104FAS-ZCT-ND
 Manufacturer:         ams-OSRAM USA INC.
 Manufacturer Part #:  BP 104 FAS-Z
+Package Type:         Cut Tape (CT)
 Quantity     Unit Price
 --------     ----------
 1             $   0.9600
 10            $   0.6700
 100           $   0.4940
+```
+
+### Multi-Product Lookup
+
+**Comma-separated:**
+
+```bash
+python source/digikey_lookup.py "475-BP104FAS-ZCT-ND,475-BP104FAS-ZTR-ND"
+```
+
+**From a file** (one part number per line):
+
+```bash
+python source/digikey_lookup.py parts.txt
+```
+
+**Wildcard patterns** (uses DigiKey keyword search, then filters with glob matching):
+
+```bash
+python source/digikey_lookup.py "475-BP104FAS*"
+```
+
+### Result Limiting
+
+By default, multi-product lookups are capped at 10 results to protect your API quota.
+
+```bash
+# Cap at 5 results
+python source/digikey_lookup.py "475-BP104FAS*" --max 5
+
+# No limit
+python source/digikey_lookup.py "475-BP104FAS*" --max 0
+python source/digikey_lookup.py "475-BP104FAS*" --max inf
+
+# Interactive: prompt before proceeding if results exceed 10
+python source/digikey_lookup.py "475-BP104FAS*" -i
+
+# Suppress the truncation warning
+python source/digikey_lookup.py "475-BP104FAS*" -q
 ```
 
 ### Raw JSON Output
@@ -111,6 +152,7 @@ BP 104 FAS-Z, $0.4940
 | `MFR`  | Manufacturer name                                  |
 | `MPN`  | Manufacturer part number                           |
 | `URL`  | Product URL on digikey.com                         |
+| `PKG`  | Package type / variation (e.g. "Cut Tape (CT)")    |
 | `P`    | Unit price at minimum order quantity               |
 | `P<n>` | Unit price at quantity `<n>` (e.g., `P100`, `P15`) |
 
@@ -125,9 +167,22 @@ Price codes use the applicable price break: the highest break quantity at or bel
 # Tab-separated fields for spreadsheet import
 --fmt "DK\tMPN\tMFR\t$P"
 
+# Part number with packaging info
+--fmt "DK (PKG): $P100"
+
 # Just the product URL
 --fmt "URL"
 ```
+
+### Options Summary
+
+| Option              | Description                                          |
+|---------------------|------------------------------------------------------|
+| `--json`            | Output raw JSON response                             |
+| `--fmt FORMAT`      | One-line output using format codes                   |
+| `--max N`           | Cap results at N (default: 10). 0 or inf = no limit  |
+| `-i`, `--interactive` | Prompt before looking up more than 10 results      |
+| `-q`, `--quiet`     | Suppress warnings                                    |
 
 ## Project Structure
 

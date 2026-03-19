@@ -21,6 +21,7 @@ KEYWORD_SEARCH_URL = "https://api.digikey.com/products/v4/search/keyword"
 #   MFR = Manufacturer name
 #   MPN = Manufacturer part number
 #   URL = Product URL
+#   PKG  = Package type / variation (e.g. "Cut Tape (CT)", "Tape & Reel (TR)")
 #   P<n> = Unit price at quantity <n> (uses applicable price break)
 #   P    = Unit price at minimum order quantity
 
@@ -164,7 +165,7 @@ def resolve_part_numbers(input_str, client_id, token):
     return [input_str], None
 
 
-def apply_max_limit(part_numbers, max_results, interactive, total_search_results=None):
+def apply_max_limit(part_numbers, max_results, interactive, quiet=False, total_search_results=None):
     """Apply --max / --interactive limits. Returns the (possibly truncated) list."""
     count = len(part_numbers)
 
@@ -181,9 +182,10 @@ def apply_max_limit(part_numbers, max_results, interactive, total_search_results
         return part_numbers
 
     if max_results is not None and max_results > 0 and count > max_results:
-        print(f"Warning: {count} parts found, capping at --max {max_results}. "
-              f"Use --max 0 for no limit or -i for interactive confirmation.",
-              file=sys.stderr)
+        if not quiet:
+            print(f"Warning: {count} parts found, capping at --max {max_results}. "
+                  f"Use --max 0 for no limit or -i for interactive confirmation.",
+                  file=sys.stderr)
         return part_numbers[:max_results]
 
     return part_numbers
@@ -202,23 +204,31 @@ def interpolate_price(pricing, qty):
     return applicable.get("UnitPrice")
 
 
-def get_dk_part_and_pricing(product):
-    """Get the DK part number and pricing from the first non-marketplace variation."""
-    for var in product.get("ProductVariations", []):
+def find_variation(product, target_dk_pn=None):
+    """Find the matching variation for a DK part number, or the first non-marketplace one."""
+    variations = product.get("ProductVariations", [])
+    if target_dk_pn:
+        for var in variations:
+            if var.get("DigiKeyProductNumber") == target_dk_pn:
+                return var
+    # Fallback: first non-marketplace variation with pricing
+    for var in variations:
         if not var.get("MarketPlace", False):
-            dk_part = var.get("DigiKeyProductNumber", "N/A")
             pricing = var.get("StandardPricing", [])
-            min_qty = var.get("MinimumOrderQuantity", 1)
             if pricing:
-                return dk_part, pricing, min_qty
-    return "N/A", [], 1
+                return var
+    return variations[0] if variations else {}
 
 
-def extract_fields(data):
+def extract_fields(data, target_dk_pn=None):
     """Extract all field values from API response into a dict."""
     product = data.get("Product", {})
     description = product.get("Description", {})
-    dk_part, pricing, min_qty = get_dk_part_and_pricing(product)
+    var = find_variation(product, target_dk_pn)
+    pkg = var.get("PackageType", {}).get("Name", "N/A")
+    dk_part = var.get("DigiKeyProductNumber", "N/A")
+    pricing = var.get("StandardPricing", [])
+    min_qty = var.get("MinimumOrderQuantity", 1)
     return {
         "DD": description.get("DetailedDescription", "") or description.get("ProductDescription", ""),
         "PD": description.get("ProductDescription", ""),
@@ -226,6 +236,7 @@ def extract_fields(data):
         "MFR": product.get("Manufacturer", {}).get("Name", "N/A"),
         "MPN": product.get("ManufacturerProductNumber", "N/A"),
         "URL": product.get("ProductUrl", "N/A"),
+        "PKG": pkg,
         "_pricing": pricing,
         "_min_qty": min_qty,
     }
@@ -246,7 +257,7 @@ def format_custom(fmt, fields):
 
     # Replace fixed codes longest-first to avoid partial matches
     result = fmt
-    for code in sorted(("DD", "PD", "DK", "MFR", "MPN", "URL"), key=len, reverse=True):
+    for code in sorted(("DD", "PD", "DK", "MFR", "MPN", "URL", "PKG"), key=len, reverse=True):
         result = result.replace(code, make_placeholder(str(fields.get(code, "N/A"))))
 
     # Replace P<digits> and bare P with price values
@@ -275,6 +286,7 @@ def format_output(fields):
     print(f"DigiKey Part #:       {fields['DK']}")
     print(f"Manufacturer:         {fields['MFR']}")
     print(f"Manufacturer Part #:  {fields['MPN']}")
+    print(f"Package Type:         {fields['PKG']}")
 
     pricing = fields["_pricing"]
     if pricing:
@@ -288,12 +300,12 @@ def format_output(fields):
         print("Pricing:              N/A")
 
 
-def output_product(data, args):
+def output_product(data, args, target_dk_pn=None):
     """Output a single product's data according to the chosen format."""
     if args.json:
         print(json.dumps(data, indent=2))
     else:
-        fields = extract_fields(data)
+        fields = extract_fields(data, target_dk_pn)
         if args.fmt:
             print(format_custom(args.fmt, fields))
         else:
@@ -328,7 +340,7 @@ def main():
     )
     parser.add_argument(
         "--fmt",
-        help="One-line output format using field codes: DD, PD, DK, MFR, MPN, URL, P<qty>, P. "
+        help="One-line output format using field codes: DD, PD, DK, MFR, MPN, URL, PKG, P<qty>, P. "
              "P with no number gives the price at minimum order qty. "
              "Example: 'DD: $P15' outputs the description, colon, space, dollar sign, and price at qty 15."
     )
@@ -340,6 +352,10 @@ def main():
     parser.add_argument(
         "-i", "--interactive", action="store_true",
         help="Prompt for confirmation when results exceed the default limit, overrides --max."
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="Suppress warnings (e.g. the --max truncation warning)."
     )
     args = parser.parse_args()
 
@@ -353,9 +369,11 @@ def main():
         sys.exit(1)
 
     if args.interactive:
-        part_numbers = apply_max_limit(part_numbers, None, True, total_search)
+        part_numbers = apply_max_limit(part_numbers, None, True,
+                                       quiet=args.quiet, total_search_results=total_search)
     elif args.max_results != 0:
-        part_numbers = apply_max_limit(part_numbers, args.max_results, False, total_search)
+        part_numbers = apply_max_limit(part_numbers, args.max_results, False,
+                                       quiet=args.quiet, total_search_results=total_search)
 
     separator_needed = not args.fmt and len(part_numbers) > 1
     first = True
@@ -369,7 +387,7 @@ def main():
         data = lookup_product(pn, client_id, token)
         if data is None:
             continue
-        output_product(data, args)
+        output_product(data, args, target_dk_pn=pn)
 
 
 if __name__ == "__main__":
